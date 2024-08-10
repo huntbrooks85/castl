@@ -1,20 +1,31 @@
+from astropy.table import Table
+from astropy.io import fits
 import pandas as pd
 import numpy as np
 import glob
 import os
-from astropy.io import fits
-from astropy.table import Table
-
 
 def observed_spectra(input_file): 
-    observed = pd.read_csv(input_file)
+    if input_file is None: 
+        raise ValueError('Please Input A Input File Directory')
+    
+    try: 
+        observed = pd.read_csv(input_file)
 
-    observed_wave = observed.iloc[:, 0].tolist()
-    observed_flux = observed.iloc[:, 1].tolist()
+        observed_wave = observed.iloc[:, 0].tolist()
+        observed_flux = observed.iloc[:, 1].tolist()
+    except ValueError: 
+        raise ValueError
     
     return observed_wave, observed_flux
 
 def model_spectra(model_directory, model_parameters): 
+    
+    if model_directory is None: 
+        raise ValueError('Please Input a Model Directory')
+    if model_parameters is None: 
+        raise ValueError('Please Input the Model Parameters')
+    
     model_files = glob.glob(f'{model_directory}*')
     
     if len(model_files) != 0: 
@@ -57,9 +68,16 @@ def model_spectra(model_directory, model_parameters):
             
     return total_grid
 
-def normalize_flux(): 
-    # DO FOR BOTH 
-    observed_flux = [x / np.nanpercentile(observed_flux, 99.9) for x in observed_flux]
-    observed_flux = [x if x >= 0 else 2.2250738585072014e-30 for x in observed_flux]
-    observed_flux = np.nan_to_num(observed_flux, nan=2.2250738585072014e-30)
+def normalize_flux(flux): 
+    if flux is None: 
+        raise ValueError('Please Input an Array of Fluxes')
+    
+    try:
+        normalized_flux = [x / np.nanpercentile(flux, 99.9) for x in flux]
+        normalized_flux = [x if x >= 0 else 2.2250738585072014e-30 for x in flux]
+        normalized_flux = np.nan_to_num(flux, nan=2.2250738585072014e-30)
+    except ValueError: 
+        raise ValueError
+    
+    return normalized_flux
 
