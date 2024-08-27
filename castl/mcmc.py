@@ -1,12 +1,17 @@
 
 
 
-
-def mcmc_run(): 
+def stat_type(): 
     pass
 
-def mcmc_plot(): 
+def statmc(): 
     pass
 
-def mcmc_table(): 
+def specmc(): 
+    pass
+
+def mcplot(): 
+    pass
+
+def mctable(): 
     pass

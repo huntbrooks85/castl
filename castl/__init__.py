@@ -1,7 +1,5 @@
-from .interpolation import grid_interpolate, resample
-from .mcmc import mcmc_run, mcmc_plot, mcmc_table
-from .metric import  run_stats, best_fit, best_fit_plot
-from .spectra import observed_spectra, model_spectra, normalize_flux
+from .mcmc import stat_type, statmc, specmc, mcplot, mctable
+from .spectra import obspec, gridinter, respec, gridspec, normspec
 
 __version__ = '0.1.0'
 __author__ = 'Hunter Brooks'

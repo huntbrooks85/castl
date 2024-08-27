@@ -6,13 +6,13 @@ setup(
     version="0.1",
     license="MIT License",
     packages=find_packages(),
-    install_requires=[],  # No external dependencies for this example
+    install_requires=[],  # FILL THIS OUT ONCE I GET THE DEPENDENCIES!!!
     author="Hunter Brooks",
     author_email="hcb98@nau.edu",
-    description="A Model Spectral Fitting MCMC Code With Linear Interpolation",
+    description="Computional Analysis of Spectral TempLates",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    url="https://github.com/huntbrooks85/castl",  # Your GitHub repository link
+    url="https://github.com/huntbrooks85/castl", 
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
