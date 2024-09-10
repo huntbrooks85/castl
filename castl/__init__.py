@@ -1,5 +1,4 @@
-from .mcmc import statmc, specmc, mcplot, mctable, mcbest
-from .spectra import obspec, gridinter, respec, gridspec
+from .mcfit import statmc, specmc, mcplot, mctable, mcbest, gridinter, obspec, gridspec
 
 __version__ = '0.1.0'
 __author__ = 'Hunter Brooks'
