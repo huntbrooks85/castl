@@ -1,5 +1,13 @@
-astropy
-pandas
-numpy
-glob
 os
+re
+tqdm
+glob2
+emcee
+scipy
+numpy
+corner
+pathos
+pandas
+astropy
+matplotlib
+concurrent.futures
