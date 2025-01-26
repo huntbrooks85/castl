@@ -5,6 +5,7 @@ import emcee
 # ------ Import File Processing Packages ------ #
 from pathos.multiprocessing import ProcessingPool as Pool
 from concurrent.futures import ThreadPoolExecutor
+from IPython.display import clear_output
 from tqdm import tqdm
 import glob
 import h5py
@@ -24,11 +25,11 @@ import corner
 # -------------------------------------- #
 
 # ------ Import Math Packages ------ #
-from scipy.interpolate import LinearNDInterpolator
-from scipy.interpolate import NearestNDInterpolator
+from sklearn.preprocessing import MinMaxScaler
+from scipy.interpolate import RBFInterpolator
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
-from scipy.spatial import Delaunay
+from emcee.moves import StretchMove
 import numpy as np
 import math
 # ---------------------------------- #
@@ -38,7 +39,7 @@ import warnings
 warnings.filterwarnings('ignore')
 # --------------------------------- #
 
-def mcmcfit(input_file, output_file, model_directory, model_parm, unit, walkers, max_step, safety_coeff): 
+def mcmcfit(input_file, output_file, model_directory, model_parm, unit=1, walkers=15, max_step=1000, safety_coeff=10, stretch_factor=2, monitor = False): 
     '''
     Runs Spectral Fitting Markov-Chain Monte-Carlo Simulations Based on Inputted Model Spectra
 
@@ -49,6 +50,10 @@ def mcmcfit(input_file, output_file, model_directory, model_parm, unit, walkers,
             model_parm (list): List of model parameters, in order of the model file name
             unit (float): Unit converter, observed spectrum wavelength unit used as standard
             walkers (int): Number of MCMC walkers
+            max_steps (int): Max Number of Steps
+            safety_coeff (float): The Multiplication Factor after tau is Reached
+            stretch_factor (float): The emcee Stretch Factor
+            monitor (boolean): When 'True' step monitors are activated
 
         Returns:
             Tables (csv): Saves best fit model spectrum and every walker value for each parameter
@@ -56,21 +61,22 @@ def mcmcfit(input_file, output_file, model_directory, model_parm, unit, walkers,
             Best Fit Parameters (list): Best fit value for each parameter and the associated uncertainties
     '''
     
+    print('<------ castl Calculation Started ------>')
+    
     # ------ Load in the observed models and spectra ------ #
-    wave,flux = obspec(input_file)
+    wave,flux,unc = obspec(input_file)
     grid = gridspec(model_directory, model_parm, wave, unit)
     # ----------------------------------------------------- #
     
     # ------ Build interpolation grid and start mcmc calculation ------ #
-    inter = gridinter(grid, model_parm)
-    sampler, discard = specmc(walkers, inter, flux, grid, model_parm, max_step, safety_coeff)
+    inter, scaler = gridinter(grid, model_parm)
+    sampler, discard = specmc(inter, scaler, wave, flux, unc, grid, model_parm, walkers, max_step, safety_coeff, stretch_factor, monitor)
     # ----------------------------------------------------------------- #
     
     # ------ Provides user with mcmc best fit model ------ #
-    mcplot(sampler, discard, output_file, inter, wave, flux, model_parm)
+    mcplot(sampler, discard, output_file, inter, scaler, wave, flux, unc, model_parm)
     # ---------------------------------------------------- #
-    
-    return print('MCMC Model Has Finished Running')
+    return
 
 def obspec(input_file): 
     # Read in observed spectrum
@@ -79,18 +85,21 @@ def obspec(input_file):
     # Load in the wavelength and flux
     observed_wave = observed.iloc[:, 0].tolist()
     observed_flux = observed.iloc[:, 1].tolist()
+    observed_unc = observed.iloc[:, 2].tolist()
     
     # Normalize the flux and remove nan values
+    observed_unc = [x / np.nanpercentile(observed_flux, 99) for x in observed_unc]
     observed_flux = [x / np.nanpercentile(observed_flux, 99) for x in observed_flux]
     
     # Filter both lists using the indices to keep
     indices_to_keep = [i for i, flux in enumerate(observed_flux) if not np.isnan(flux) and flux > 0]
     observed_wave = ([observed_wave[i] for i in indices_to_keep])
     observed_flux = ([observed_flux[i] for i in indices_to_keep])
+    observed_unc = ([observed_unc[i] for i in indices_to_keep])
 
-    return observed_wave, observed_flux
+    return observed_wave, observed_flux, observed_unc
      
-def gridspec(model_directory, model_parameters, observed_wave, unit_convert): 
+def gridspec(model_directory, model_parameters, observed_wave, unit_convert=1): 
     # Obtain all model file path directories
     model_files = glob.glob(f'{model_directory}/*')
     num_files = len(model_files)
@@ -106,12 +115,12 @@ def gridspec(model_directory, model_parameters, observed_wave, unit_convert):
         elif model_type == ".txt": # Loads ascii files
             return file_path, pd.read_csv(file_path, delim_whitespace=True)
         elif model_type == ".fits": # Loads fits files
-            # print(file_path)
             with fits.open(file_path) as hdul:
                 data = Table(hdul[1].data).to_pandas()
             return file_path, data
 
     # Multi-threads loading the model spectra
+    print('<------ Loading Model Spectra ------>')
     with ThreadPoolExecutor() as executor:
         results = list(tqdm(executor.map(process_file, model_files), total=num_files))
 
@@ -128,6 +137,7 @@ def gridspec(model_directory, model_parameters, observed_wave, unit_convert):
     # Makes observed wavelengths an array for interpolation
     observed_wave = np.array(observed_wave)
 
+    print('\n<------ Building Model Grid ------>')
     for j in tqdm(range(num_files)): 
         # Loads in each model wavelength and flux for each index and converts to array
         model_wave = (np.array(total_data['file_data'][j].iloc[:, 0]) * unit_convert) # Applies wavelength unit conversion here
@@ -143,84 +153,52 @@ def gridspec(model_directory, model_parameters, observed_wave, unit_convert):
         total_grid['flux'].append(resampled_flux)
 
         # Adds model parameter number to the final grid
-        numbers = (re.findall(r'-?\d+\.?\d*', total_data['file_path'][j]))[1:]
+        numbers = (re.findall(r'-?\d+\.?\d*', total_data['file_path'][j].split('/', 100000)[-1]))[0:]
         for p, number in enumerate(numbers): 
             if p < len(model_parameters):
                 total_grid[model_parameters[p]].append((float(number)))
     return total_grid
 
 def gridinter(temp_grid, parm_list):
-    # Ensure flux is a NumPy array
+    # Ensure flux and parameters are NumPy arrays
     grid_params = np.array([temp_grid[key] for key in parm_list]).T
     value_grid = np.asarray(temp_grid['flux'])
-    interpolator = LinearNDInterpolator(grid_params, value_grid)
     
-    return interpolator
+    scaler_params = MinMaxScaler()
+    normalized_grid_params = scaler_params.fit_transform(grid_params)
+    
+    # Create the RBF interpolator
+    print('\n<------ Building Interpolation Grid ------>')
+    interpolator = RBFInterpolator(normalized_grid_params, value_grid)
+    
+    return interpolator, scaler_params
 
-def statmc(observed_flux, interpolator, parm):
-    filter_width = parm[-1]  # Get the additional parameter for filtering
-    model_flux = interpolator(*parm[:-1])  # Only use the main parameters for interpolation
+def statmc(wave, observed_flux, unc, interpolator, scaler, parm):
+    filter_width = parm[-1]
+    unc = np.array(unc)
+    
+    # Denormalize the input parameters using the provided scaler
+    point = np.array(parm[:-1].reshape(1, -1))
+    normalized_new_point = scaler.transform(point)
+    
+    # Reshape the denormalized parameters to a 2D array for the interpolator
+    model_flux = interpolator(normalized_new_point)  # Reshape to (1, n_dimensions)
 
     # Apply Gaussian filter to the model flux
-    resampled_flux = gaussian_filter1d(model_flux, filter_width)
+    resampled_flux = gaussian_filter1d(model_flux[0], filter_width)  # Access the first element after interpolation
 
-    # Efficiently calculates chi-square between observed flux and interpolated model flux
-    chi_square = np.nansum(((observed_flux - resampled_flux) ** 2) / resampled_flux)
-    
-    stat = 0.5 * chi_square
+    # Efficiently calculate chi-square between observed and model flux
+    temp_stat = (np.nansum(np.square(np.divide(np.subtract(observed_flux, resampled_flux), unc))))/len(observed_flux)
+    stat = -0.5 * temp_stat
 
     return stat
 
-def best_grid(grid, observed_flux, model_parm): 
-    best_stat = np.inf
-    for i in range(len(grid[model_parm[3]])): 
-        temp_stat = np.nansum(((observed_flux - grid['flux'][i]) ** 2) / grid['flux'][i])
-        if temp_stat < best_stat: 
-            best_parm = []
-            for j in range(len(model_parm)): 
-                best_parm.append(grid[model_parm[j]][i])
-            best_stat = temp_stat
-    return best_parm
-
-def generate_random_points_around_best(best_parm, bounds, walkers):
-    # Ensure best_parm is a numpy array
-    best_parm = np.array(best_parm)
-    
-    # Initialize an array to hold the generated points, including an additional parameter
-    initial_positions = np.zeros((walkers, len(best_parm) + 1))
-
-    # Generate random points for each parameter
-    for i in range(len(best_parm)):
-        low, high = bounds[i]  # Get the bounds for the current parameter
-        
-        # Calculate 10% of the range
-        range_width = (high - low) * 0.1
-        
-        # Define new limits around best_parm
-        new_low = max(low, best_parm[i] - range_width)
-        new_high = min(high, best_parm[i] + range_width)
-        
-        # Generate random points within the new bounds
-        initial_positions[:, i] = np.random.uniform(low=new_low, high=new_high, size=walkers)
-    
-    # Generate random values for the additional parameter between 1 and 5
-    initial_positions[:, -1] = np.random.uniform(low=1, high=5, size=walkers)
-
-    return initial_positions
-
-def specmc(walkers, interpolator, observed_flux, grid, model_parm, max_step, safety_coeff):
+def specmc(interpolator, scaler, wave, observed_flux, unc, grid, model_parm, walkers=15, max_step=10000, safety_coeff=10, stretch_factor=2, monitor = False):
     # Function to check if the walkers' parameters are within the set bounds
     def prior(parm):
-        bound_good_bad = []
-        for i in range(len(parm_bound)):
-            if parm_bound[i][0] < parm[i] < parm_bound[i][1]:
-                bound_good_bad.append(0)
-            else: 
-                bound_good_bad.append(1)
-        if 1 in bound_good_bad:
+        if np.any(parm < np.array([low for low, high in parm_bound])) or np.any(parm > np.array([high for low, high in parm_bound])):
             return -np.inf
-        else: 
-            return 0
+        return 0
 
     # Log-posterior function combining the prior and the likelihood
     def log_posterior(parm):
@@ -228,12 +206,14 @@ def specmc(walkers, interpolator, observed_flux, grid, model_parm, max_step, saf
         if not np.isfinite(lp):
             return -np.inf
         
-        stat = statmc(observed_flux, interpolator, parm)
+        # Calls the statistic function
+        stat = statmc(wave, observed_flux, unc, interpolator, scaler, parm)
         
-        if stat <= 0:
-            return lp + -np.inf
+        # Checks if the statistic is valid
+        if stat == 0:
+            return -np.inf
         else:
-            return lp - 1000*stat
+            return lp + stat
 
     def get_min_max_ranges(grid):
         min_max_list = []
@@ -248,31 +228,51 @@ def specmc(walkers, interpolator, observed_flux, grid, model_parm, max_step, saf
         
         return min_max_list
 
-    parm_bound = get_min_max_ranges(grid) + [(1, 5)]
-
-    best_parm = best_grid(grid, observed_flux, model_parm)
-    initial_positions = generate_random_points_around_best(best_parm, parm_bound, walkers)
-
-    moves = [
-        (emcee.moves.DESnookerMove(), 0.1),
-        (emcee.moves.DEMove(), 0.9 * 0.9),
-        (emcee.moves.DEMove(gamma0=1.0), 0.9 * 0.1),
-    ]
+    parm_bound = get_min_max_ranges(grid) + [(1, 1.5)]
+    n_params = len(parm_bound)  # Number of parameters
+    initial_positions = np.zeros((walkers, n_params))  # Initialize positions array
+    
+    for i, (low, high) in enumerate(parm_bound):
+        initial_positions[:, i] = np.random.uniform(low=low + 0.1*low, high=high - 0.1*high, size=walkers)
+    
+    move = StretchMove(a=stretch_factor)
 
     # Makes the sampler ready to go
-    sampler = emcee.EnsembleSampler(walkers, len(parm_bound), log_posterior, moves=moves)
+    print('\n<------ Started MCMC Calculation ------>')
+    sampler = emcee.EnsembleSampler(walkers, len(parm_bound), log_posterior, moves=move)
 
     index = 0
     autocorr = np.empty(max_step)
     old_tau = np.inf
-    old_eigenvalues = np.inf
     best_discard = 0
     for sample in sampler.sample(initial_positions, iterations=max_step, progress=True):
         # Only check convergence every 100 steps
         if sampler.iteration == max_step:
+            if best_discard == 0: 
+                best_discard = max_step*0.25
             break
-        if sampler.iteration % 100:
+        if sampler.iteration % 1000:
             continue
+
+        # Plots stepping plot for monitoring
+        if monitor == True: 
+            plt.clf()
+            plt.close('all')
+            clear_output(wait=True)
+            print('<------ Monitor MCMC Calculation ------>')
+            n_params = sampler.chain.shape[-1]
+            fig, axes = plt.subplots(1, n_params, figsize=(4 * n_params, 4))
+            for i, ax in enumerate(axes):
+                for walker in sampler.chain[..., i]:
+                    ax.plot(walker, alpha=0.5)
+                ax.set_title(f"Param: {i}")
+                ax.set_xlabel("Step")
+                if i == 0: 
+                    ax.set_ylabel("Value")
+
+            plt.axvline(best_discard, c = 'k')
+            plt.tight_layout()
+            plt.show()   
             
         # Compute the autocorrelation time so far
         tau = sampler.get_autocorr_time(tol=0)
@@ -281,15 +281,16 @@ def specmc(walkers, interpolator, observed_flux, grid, model_parm, max_step, saf
     
         # Check convergence
         if best_discard == 0: 
-            if np.all(np.abs(old_tau - tau) / tau < 0.01):
+            if np.all(np.abs(old_tau - tau) / tau < 0.025):
                 best_discard = sampler.iteration
             
         converged = np.all(tau * safety_coeff < sampler.iteration)
-        converged &= np.all(np.abs(old_tau - tau) / tau < 0.01)
+        converged &= np.all(np.abs(old_tau - tau) / tau < 0.025)
         if converged:
             break
         old_tau = tau
-
+    
+    clear_output(wait=True)
     return sampler, best_discard
 
 def mcbest(sampler, discard): 
@@ -299,14 +300,19 @@ def mcbest(sampler, discard):
     # Flattens the Markov-Chain Monte-Carlo sample
     flat_samples = sampler.get_chain(discard=int(discard), flat=True)
     best_fit_params = []
+    
     # Finds the best fit parameters with their associated uncertainties
+    print('<------ Best Fit Parameters ------>')
+    print(f'Number of Discards: {int(discard)}')
     for i in range(chain_shape[2]):
         mcmc = np.percentile(flat_samples[:, i], [5, 50, 95])
         best_fit_params.append([mcmc[0], mcmc[1], mcmc[2]])
+        
+        print(f'Parameter {i}: {mcmc[1]:.2f} \n (Upper: {np.abs(mcmc[1] - mcmc[2]):.2f}, Lower: {np.abs(mcmc[0] - mcmc[1]):.2f})')
     
     return best_fit_params
 
-def mcplot(sampler, discard, output_file, interpolator, observed_wave, observed_flux, labels): 
+def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, observed_flux, unc, labels): 
     # SAVES DATA TO H5PY FILE
     # -------------------------------------------------------------
     chain = sampler.get_chain()
@@ -352,11 +358,16 @@ def mcplot(sampler, discard, output_file, interpolator, observed_wave, observed_
     # -------------------------------------------------------------
     fig, (ax_chain, ax_diff) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [2, 1]}) # Sets of figure dimesion and height ratios
     best_values = [sublist[len(sublist) // 2] for sublist in best_fit_params][:-1]
-    model_flux = gaussian_filter1d((interpolator(best_values)[0]), best_fit_params[-1][1]) # Finds the best fit interpolated spectral model and smooths it by a factor of 1.4
+    
+    point = np.array(np.array(best_values).reshape(1, -1))
+    normalized_new_point = scaler.transform(point)
+    interpolated_flux = interpolator(normalized_new_point)
+    model_flux = gaussian_filter1d(interpolated_flux[0], best_fit_params[-1][1])
 
-    chi_square = round(np.nansum(((observed_flux - model_flux)**2 / model_flux)), 2)
+    chi_square = round(np.nansum(np.square(np.divide(np.subtract(np.array(observed_flux), np.array(model_flux)), np.array(unc)))), 2)
     
     # Plots the observed and model spectrum
+    ax_chain.plot(observed_wave, unc, color='silver', alpha=0.8)
     ax_chain.plot(observed_wave, observed_flux, lw=2, c='k', label='Observed')
     ax_chain.plot(observed_wave, model_flux, lw=5, c='fuchsia', label='Best Fit Model', alpha=0.6)
 
@@ -372,7 +383,7 @@ def mcplot(sampler, discard, output_file, interpolator, observed_wave, observed_
         ax.minorticks_on(), ax.grid(True, alpha=0.3), ax.tick_params(which='minor', width=1, length=3, labelsize=10), ax.tick_params(which='major', width=2, length=6, labelsize=10)
 
     # Makes the grid and makes tick marks cleaner
-    ax_chain.set_ylabel('Flux log$_{10}$(erg/s/cm$^{2}$/Å)', fontsize=25)
+    ax_chain.set_ylabel('Normalized Flux \n log$_{10}$(erg/s/cm$^{2}$/Å)', fontsize=25)
     ax_chain.tick_params(axis='x', labelsize=12), ax_diff.tick_params(axis='x', labelsize=12)
     ax_chain.tick_params(axis='y', labelsize=12, labelrotation=45), ax_diff.tick_params(axis='y', labelsize=12, labelrotation=45)
     ax_chain.legend(prop={'size': 20})
