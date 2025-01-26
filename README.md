@@ -88,7 +88,7 @@
 </div>
 
 <p align="center">
-  <a href="https://ibb.co/wpby3Tz"><img src="/castl/castl_test.pdf" width="100%"></a> <br>
+  <a href="https://ibb.co/wpby3Tz"><img src="/castl/castl_test-1.png" width="100%"></a> <br>
   Example Output run using the LOWZ Model Using castl Default Settings
 </p>
 
