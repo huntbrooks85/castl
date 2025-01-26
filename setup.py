@@ -24,6 +24,7 @@ setup(
     author_email="hcb98@nau.edu",
     description="Computional Analysis of Spectral TempLates",
     long_description=open("README.md").read(),
+    long_description_content_type="text/markdown",
     url="https://github.com/huntbrooks85/castl", 
     classifiers=[
         "Programming Language :: Python :: 3",

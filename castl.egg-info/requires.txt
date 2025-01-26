@@ -1,0 +1,12 @@
+emcee
+pathos
+IPython
+tqdm
+h5py
+astropy
+pandas
+matplotlib
+corner
+scikit-learn
+scipy
+numpy
