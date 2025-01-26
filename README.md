@@ -55,33 +55,47 @@
 </div>
 
 - **Required Variables:**
-  - **input_file**: blah blah blah
+  - **input_file:** File path/name to your input spectrum: *string*: *(only csv supported)*
+     - *example:* ```/Desktop/spectra/test.csv```
 
-  - **output_file**: blah blah blah
+  - **output_file:** File path/name of output files: *string*: *(do not include file type)*
+    - *example:* ```/Output/test```
 
-  - **model_directory**: blah blah blah
+  - **model_directory:** Directory name to model spectra: *string*: *(ensure no numbers are included in path name outside of numbers in model file name)*
+    - *example:* ```/Desktop/model/LOWZ/```
 
-  - **model_parm**: blah blah blah
+  - **model_parm:** Model parameter names: *list*: *(must be in order that the paramters are in the file name)*
+   - *example order:*
+      - <b>Filename:</b> LOW_Z_BD_GRID_CLEAR_Teff_500.0_logg_3.5_logZ_-0.5_CtoO_0.1_logKzz_10.0_spec.txt
+      - <b>Order:</b> Teff, logg, logZ, CtoO, logKzz
+   - *example code:* ```['Teff', 'log(g)', '[M/H]', 'C/O', 'log(Kzz)']```
 
 - **Optional Variables:**
-  - **unit**: blah blah blah
+  - **unit:** The number to convert model spectra wavelength unit to observed spectrum wavelength: *float*
+    - *example:* 0.0001, default=1 (model: Å -> observed: µm)
 
-  - **walkers**: blah blah blah
+  - **walkers:** Number of walkers for emcee calculation: *int*
+    - *example:* 25, default=15
 
-  - **max_step**: blah blah blah
+  - **max_step:** Number of max steps for emcee calculation: *int*: *May be cutoff before this as a result of auto-correlation*
+    - *example:* 15000, default=1000
 
-  - **safety_coeff**: blah blah blah
+  - **safety_coeff:** The number multiplying the steps found after ideal tau was found: *int*
+    - *example:* 8, default=10
 
-  - **stretch_factor**: blah blah blah
+  - **stretch_factor:** The emcee StretchMove factor: *float*
+    - *example:* 10, default=2
 
-  - **monitor**: blah blah blah
+  - **monitor:** Whether a monitoring step figure is displayed every 1000 steps: *boolean*
+    - *example:* True, default=False
 
 <div align="center">
   <p><b>☢️ Significant Details ☢️</b></p>
   <p>-----------------------------------------</p>
 </div>
 
-- **Note 1**: castl is current in a beta version, thus bugs may occur 
+- **Note 1:** castl is current in a beta version, thus bugs may occur and give weird results
+- **Note 2:** Markov-Chain Monte-Carlo simulation results should always be taken with a grain of salt
 
 <div align="center">
   <h2>🧐 Example castl Output 🧐</h2>
