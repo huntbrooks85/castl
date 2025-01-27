@@ -8,7 +8,7 @@
 </div>
 
 <div align="center">
-<pp><b>⬇️ pip Installation ⬇️</b><pp>
+<pp><b> pip Installation </b><pp>
 </div>
 <div align="center">
 <pp><b>-----------------------------------------</b><pp>
@@ -21,15 +21,15 @@
    pip install castl
 
 <div align="center">
-  <p><b>💪 Manual Installation 💪</b></p>
+  <p><b> Manual Installation </b></p>
 </div>
 <div align="center">
 <pp><b>-----------------------------------------</b><pp>
 </div>
 
-1. **Download Python Version 3.8:** Visit [here](https://www.python.org/downloads/) to install Python
+1. **Download Python:** Visit [here](https://www.python.org/downloads/) to install Python
 2. **Download pip:** Visit [here](https://pip.pypa.io/en/stable/installation/) to install pip
-3. **Downloading castl:** Download the latest version of castl in the "Releases" tab on the [Github](https://github.com/huntbrooks85/castl) page
+3. **Downloading castl:** Download the latest version of castl in the "Releases" tab of the [Github](https://github.com/huntbrooks85/castl) page
 4. **pip Packages:** Go into the directory of castl and run the command:
    ```bash
    pip install -r requirements.txt
@@ -39,7 +39,7 @@
 </div>
 
 <div align="center">
-  <p><b>🦾 How to Use castl 🦾</b></p>
+  <p><b> How to Use castl </b></p>
 </div>
 <div align="center">
 <pp><b>-----------------------------------------</b><pp>
@@ -50,7 +50,7 @@
 3. To run the Markov-Chain Monte-Carlo simulation, execute the command: ```mcmcfit(input_file, output_file, model_directory, model_parm)```. These are the minimum required parameters for castl to run. You can include optional variables if needed.
 
 <div align="center">
-  <p><b>🔎 Relavent Variables 🔍</b></p>
+  <p><b> Relavent Variables </b></p>
   <p>-----------------------------------------</p>
 </div>
 
@@ -58,7 +58,7 @@
   - **input_file:** File path/name to your input spectrum: *string*: *(only csv supported)*
      - *example:* ```/Desktop/spectra/test.csv```
 
-  - **output_file:** File path/name of output files: *string*: *(do not include file type)*
+  - **output_file:** File path/name of output file: *string*: *(do not include file type)*
     - *example:* ```/Output/test```
 
   - **model_directory:** Directory name to model spectra: *string*: *(ensure no numbers are included in path name outside of numbers in model file name)*
@@ -90,20 +90,12 @@
     - *example:* True, default=False
 
 <div align="center">
-  <p><b>☢️ Significant Details ☢️</b></p>
-  <p>-----------------------------------------</p>
-</div>
-
-- **Note 1:** castl is current in a beta version, thus bugs may occur and give weird results
-- **Note 2:** Markov-Chain Monte-Carlo simulation results should always be taken with a grain of salt
-
-<div align="center">
-  <h2>🧐 Example castl Output 🧐</h2>
+  <h2> Example castl Output </h2>
 </div>
 
 <p align="center">
   <a href="https://ibb.co/wpby3Tz"><img src="/castl/castl_test-1.png" width="100%"></a> <br>
-  Example Output run using the LOWZ Model Using castl Default Settings
+  Example Output Using castl on the LOWZ Model With Default Setting Activated 
 </p>
 
 <div align="center">
