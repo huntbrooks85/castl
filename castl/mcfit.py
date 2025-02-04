@@ -15,6 +15,7 @@ import re
 
 # ------ Import File Loading Packages ------ #
 from astropy.table import Table
+from netCDF4 import Dataset
 from astropy.io import fits
 import pandas as pd
 # ------------------------------------------ #
@@ -27,6 +28,7 @@ import corner
 # ------ Import Math Packages ------ #
 from sklearn.preprocessing import MinMaxScaler
 from scipy.interpolate import RBFInterpolator
+from scipy.interpolate import LinearNDInterpolator
 from scipy.ndimage import gaussian_filter1d
 from scipy.interpolate import interp1d
 from emcee.moves import StretchMove
@@ -61,16 +63,13 @@ def mcmcfit(input_file, output_file, model_directory, model_parm, unit=1, walker
             Best Fit Parameters (list): Best fit value for each parameter and the associated uncertainties
     '''
     
-    print('<------ castl Calculation Started ------>')
-    
     # ------ Load in the observed models and spectra ------ #
-    wave,flux,unc = obspec(input_file)
-    grid = gridspec(model_directory, model_parm, wave, unit)
+    wave, flux, unc = obspec(input_file)
     # ----------------------------------------------------- #
     
     # ------ Build interpolation grid and start mcmc calculation ------ #
-    inter, scaler = gridinter(grid, model_parm)
-    sampler, discard = specmc(inter, scaler, wave, flux, unc, grid, model_parm, walkers, max_step, safety_coeff, stretch_factor, monitor)
+    inter, scaler, grid = gridinter(model_parm, model_directory, wave, unit)
+    sampler, discard = specmc(wave, inter, scaler, flux, unc, grid, walkers, max_step, stretch_factor, monitor)
     # ----------------------------------------------------------------- #
     
     # ------ Provides user with mcmc best fit model ------ #
@@ -80,7 +79,33 @@ def mcmcfit(input_file, output_file, model_directory, model_parm, unit=1, walker
 
 def obspec(input_file): 
     # Read in observed spectrum
-    observed = pd.read_csv(input_file)
+    file_ext = input_file.split('.')[-1].lower()  # Get file extension
+
+    if file_ext == "csv":  # CSV files
+        observed = pd.read_csv(input_file)
+        
+    elif file_ext == "vot":  # VOTable files
+        votable = votable.parse(input_file) 
+        observed = votable.get_table() 
+    
+    elif file_ext == "nc":  # NetCDF files
+        with Dataset(input_file, 'r') as nc_file:
+            variables = list(nc_file.variables.keys())
+            observed = nc_file.variables[variables[0]][:]
+
+    elif file_ext in ["txt", "dat", "tbl"]:  # ASCII tables with whitespace or tab delimiters
+        observed = pd.read_csv(input_file, delim_whitespace=True)
+        
+    elif file_ext in ["tsv"]:  # Loads Tab-Separated files
+        observed = pd.read_csv(file_path, sep="\t")
+
+    elif file_ext == "fits":  # FITS files
+        with fits.open(input_file) as hdul:
+            data = Table(hdul[1].data).to_pandas()
+        observed = data
+        
+    else:
+        raise ValueError(f"Unsupported file format: {file_ext}")
     
     # Load in the wavelength and flux
     observed_wave = observed.iloc[:, 0].tolist()
@@ -98,85 +123,44 @@ def obspec(input_file):
     observed_unc = ([observed_unc[i] for i in indices_to_keep])
 
     return observed_wave, observed_flux, observed_unc
-     
-def gridspec(model_directory, model_parameters, observed_wave, unit_convert=1): 
-    # Obtain all model file path directories
-    model_files = glob.glob(f'{model_directory}/*')
-    num_files = len(model_files)
 
-    # Build a temporary dictionary to load in model spectra
-    model_type = os.path.splitext(model_files[0])[1]
-    total_data = {'file_path': [], 'file_data': []}
+def gridinter(parm_list, model_directory, observed_wave, unit):
+    # Pre-load the file and store all data in memory
+    with h5py.File(f"{model_directory}", "r") as h5f:
+        original_names = {key: h5f[key].attrs.get("original_name", key) for key in h5f.keys()}
+        loaded_grid = {original_names[key]: h5f[key][()] for key in h5f.keys()}
+         
+    wavelength_data_list = loaded_grid['wavelength']  # List of wavelength lists
+    flux_data_list = loaded_grid['flux']  # List of flux lists
 
-    # Function to load in csv, ascii, and fits model tables
-    def process_file(file_path):
-        if model_type == ".csv": # Loads csv files
-            return file_path, pd.read_csv(file_path)
-        elif model_type == ".txt": # Loads ascii files
-            return file_path, pd.read_csv(file_path, delim_whitespace=True)
-        elif model_type == ".fits": # Loads fits files
-            with fits.open(file_path) as hdul:
-                data = Table(hdul[1].data).to_pandas()
-            return file_path, data
+    # Interpolation function and replacement
+    new_flux_data_list = []
+    for wavelength_data, flux_data in tqdm(zip(wavelength_data_list, flux_data_list), total=len(wavelength_data_list), desc="Resampling Flux: ", ncols=100, unit="step"):
+        f_interp = interp1d(wavelength_data*unit, flux_data, kind='linear', fill_value="extrapolate")
+        new_flux = f_interp(observed_wave)
+        new_flux /= np.nanmax(new_flux)
+        new_flux_data_list.append(new_flux)
 
-    # Multi-threads loading the model spectra
-    print('<------ Loading Model Spectra ------>')
-    with ThreadPoolExecutor() as executor:
-        results = list(tqdm(executor.map(process_file, model_files), total=num_files))
-
-    # Saves the data to the temporary model dictionary
-    for file_path, file_data in results:
-        total_data['file_path'].append(file_path)
-        total_data['file_data'].append(file_data)
-        
-    # Build new, final, dictionary containing every parameter in the grid    
-    total_grid = {'wavelength': [], 'flux': []}
-    for parm in model_parameters:
-        total_grid[parm] = []
+    # Efficiently create grid parameters using np.column_stack
+    grid_params = np.column_stack([loaded_grid[key] for key in parm_list])
     
-    # Makes observed wavelengths an array for interpolation
-    observed_wave = np.array(observed_wave)
+    # Normalize parameters
+    scaler = MinMaxScaler()
+    normalized_grid_params = scaler.fit_transform(grid_params)
 
-    print('\n<------ Building Model Grid ------>')
-    for j in tqdm(range(num_files)): 
-        # Loads in each model wavelength and flux for each index and converts to array
-        model_wave = (np.array(total_data['file_data'][j].iloc[:, 0]) * unit_convert) # Applies wavelength unit conversion here
-        model_flux = (np.array(total_data['file_data'][j].iloc[:, 1]))
+    # Build RBF interpolator with nearest neighbors
+    N, D = grid_params.shape
+    if D < 5:
+        interpolator = LinearNDInterpolator(normalized_grid_params, new_flux_data_list)
+    else:
+        interpolator = RBFInterpolator(normalized_grid_params, new_flux_data_list)
 
-        # Resamples model spectrum to the resolution of the observed spectrum
-        f_interp = interp1d(model_wave, model_flux, kind='linear', fill_value="extrapolate")
-        resampled_flux = f_interp(observed_wave)
-        resampled_flux /= np.nanmax(resampled_flux)  # Normalize by the max value
-        
-        # Saves resampeld model spectrum to total grid
-        total_grid['wavelength'].append(observed_wave)
-        total_grid['flux'].append(resampled_flux)
+    return interpolator, scaler, grid_params
 
-        # Adds model parameter number to the final grid
-        numbers = (re.findall(r'-?\d+\.?\d*', total_data['file_path'][j].split('/', 100000)[-1]))[0:]
-        for p, number in enumerate(numbers): 
-            if p < len(model_parameters):
-                total_grid[model_parameters[p]].append((float(number)))
-    return total_grid
-
-def gridinter(temp_grid, parm_list):
-    # Ensure flux and parameters are NumPy arrays
-    grid_params = np.array([temp_grid[key] for key in parm_list]).T
-    value_grid = np.asarray(temp_grid['flux'])
-    
-    scaler_params = MinMaxScaler()
-    normalized_grid_params = scaler_params.fit_transform(grid_params)
-    
-    # Create the RBF interpolator
-    print('\n<------ Building Interpolation Grid ------>')
-    interpolator = RBFInterpolator(normalized_grid_params, value_grid)
-    
-    return interpolator, scaler_params
-
-def statmc(wave, observed_flux, unc, interpolator, scaler, parm):
+def statmc(observed_wave, observed_flux, unc, interpolator, scaler, parm):
     filter_width = parm[-1]
     unc = np.array(unc)
-    
+
     # Denormalize the input parameters using the provided scaler
     point = np.array(parm[:-1].reshape(1, -1))
     normalized_new_point = scaler.transform(point)
@@ -185,15 +169,15 @@ def statmc(wave, observed_flux, unc, interpolator, scaler, parm):
     model_flux = interpolator(normalized_new_point)  # Reshape to (1, n_dimensions)
 
     # Apply Gaussian filter to the model flux
-    resampled_flux = gaussian_filter1d(model_flux[0], filter_width)  # Access the first element after interpolation
+    resampled_flux = gaussian_filter1d(model_flux, filter_width)  # Access the first element after interpolation
 
     # Efficiently calculate chi-square between observed and model flux
-    temp_stat = (np.nansum(np.square(np.divide(np.subtract(observed_flux, resampled_flux), unc))))/len(observed_flux)
+    temp_stat = (np.nansum(np.square(np.divide(np.subtract(observed_flux, resampled_flux[0]), unc))))/len(observed_flux)
     stat = -0.5 * temp_stat
-
+    
     return stat
 
-def specmc(interpolator, scaler, wave, observed_flux, unc, grid, model_parm, walkers=15, max_step=10000, safety_coeff=10, stretch_factor=2, monitor = False):
+def specmc(observed_wave, interpolator, scaler, observed_flux, unc, grid, walkers=15, max_step=10000, stretch_factor=2, monitor = False):
     # Function to check if the walkers' parameters are within the set bounds
     def prior(parm):
         if np.any(parm < np.array([low for low, high in parm_bound])) or np.any(parm > np.array([high for low, high in parm_bound])):
@@ -207,7 +191,7 @@ def specmc(interpolator, scaler, wave, observed_flux, unc, grid, model_parm, wal
             return -np.inf
         
         # Calls the statistic function
-        stat = statmc(wave, observed_flux, unc, interpolator, scaler, parm)
+        stat = statmc(observed_wave, observed_flux, unc, interpolator, scaler, parm)
         
         # Checks if the statistic is valid
         if stat == 0:
@@ -217,11 +201,9 @@ def specmc(interpolator, scaler, wave, observed_flux, unc, grid, model_parm, wal
 
     def get_min_max_ranges(grid):
         min_max_list = []
-        keys = list(grid.keys())  # Get a list of keys
         
-        # Start from the third key (index 2)
-        for key in keys[2:]:
-            values = grid[key]
+        for i in range(len(grid[0, :])):
+            values = grid[:, i]
             tlow = min(values)
             thigh = max(values)
             min_max_list.append((tlow, thigh))
@@ -238,18 +220,12 @@ def specmc(interpolator, scaler, wave, observed_flux, unc, grid, model_parm, wal
     move = StretchMove(a=stretch_factor)
 
     # Makes the sampler ready to go
-    print('\n<------ Started MCMC Calculation ------>')
     sampler = emcee.EnsembleSampler(walkers, len(parm_bound), log_posterior, moves=move)
 
-    index = 0
-    autocorr = np.empty(max_step)
-    old_tau = np.inf
     best_discard = 0
-    for sample in sampler.sample(initial_positions, iterations=max_step, progress=True):
-        # Only check convergence every 100 steps
+    for sample in tqdm(sampler.sample(initial_positions, iterations=max_step),  total=max_step, desc="Starting MCMC: ", ncols=100, unit="step"):
         if sampler.iteration == max_step:
-            if best_discard == 0: 
-                best_discard = max_step*0.25
+            best_discard = max_step*0.25
             break
         if sampler.iteration % 1000:
             continue
@@ -273,27 +249,11 @@ def specmc(interpolator, scaler, wave, observed_flux, unc, grid, model_parm, wal
             plt.axvline(best_discard, c = 'k')
             plt.tight_layout()
             plt.show()   
-            
-        # Compute the autocorrelation time so far
-        tau = sampler.get_autocorr_time(tol=0)
-        autocorr[index] = np.mean(tau)
-        index += 1
-    
-        # Check convergence
-        if best_discard == 0: 
-            if np.all(np.abs(old_tau - tau) / tau < 0.025):
-                best_discard = sampler.iteration
-            
-        converged = np.all(tau * safety_coeff < sampler.iteration)
-        converged &= np.all(np.abs(old_tau - tau) / tau < 0.025)
-        if converged:
-            break
-        old_tau = tau
     
     clear_output(wait=True)
     return sampler, best_discard
 
-def mcbest(sampler, discard): 
+def mcbest(sampler, discard, labels): 
     # Obtains the shape of the Markov-Chain Monte-Carlo sample
     chain_shape = sampler.chain.shape
     
@@ -308,7 +268,8 @@ def mcbest(sampler, discard):
         mcmc = np.percentile(flat_samples[:, i], [5, 50, 95])
         best_fit_params.append([mcmc[0], mcmc[1], mcmc[2]])
         
-        print(f'Parameter {i}: {mcmc[1]:.2f} \n (Upper: {np.abs(mcmc[1] - mcmc[2]):.2f}, Lower: {np.abs(mcmc[0] - mcmc[1]):.2f})')
+        if i != (chain_shape[2] - 1):
+            print(f'{labels[i]}: {mcmc[1]:.2f} \n (Upper: {np.abs(mcmc[1] - mcmc[2]):.2f}, Lower: {np.abs(mcmc[0] - mcmc[1]):.2f})')
     
     return best_fit_params
 
@@ -317,7 +278,7 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     # -------------------------------------------------------------
     chain = sampler.get_chain()
     
-    with h5py.File(f'{output_file}.h5', 'w') as f:
+    with h5py.File(f'{output_file}_sampler.h5', 'w') as f:
         f.create_dataset('chain', data=chain)
         f.create_dataset('log_prob', data=sampler.get_log_prob())
     # -------------------------------------------------------------
@@ -327,7 +288,7 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     plt.rcParams['font.family'] = 'serif'  # Use a generic serif font
 
     chain_shape = sampler.chain.shape# Obtains shape of simulation sample
-    best_fit_params = mcbest(sampler, discard) # Obtains best fit simulation parameters
+    best_fit_params = mcbest(sampler, discard, labels) # Obtains best fit simulation parameters
     # -------------------------------------------------------------
     
     # PLOTS WALKERS
