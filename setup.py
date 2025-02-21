@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="castl",
-    version="0.5.0",
+    version="0.6.0",
     license="MIT License",
     packages=find_packages(),
     install_requires=[
@@ -18,7 +18,8 @@ setup(
         "corner",
         "scikit-learn",
         "scipy",
-        "numpy"
+        "numpy", 
+        "xarray"
                     ],  # FILL THIS OUT ONCE I GET THE DEPENDENCIES!!!
     author="Hunter Brooks",
     author_email="hcb98@nau.edu",

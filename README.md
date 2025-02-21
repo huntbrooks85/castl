@@ -11,7 +11,6 @@
 <pp><b> pip Installation </b><pp>
 </div>
 <div align="center">
-<pp><b>-----------------------------------------</b><pp>
 </div>
 
 1. **Download Python:** Visit [here](https://www.python.org/downloads/) to install Python 
@@ -24,7 +23,6 @@
   <p><b> Manual Installation </b></p>
 </div>
 <div align="center">
-<pp><b>-----------------------------------------</b><pp>
 </div>
 
 1. **Download Python:** Visit [here](https://www.python.org/downloads/) to install Python
@@ -39,64 +37,87 @@
 </div>
 
 <div align="center">
-  <p><b> How to Use castl </b></p>
+  <p><b> How to Use h5grid </b></p>
 </div>
 <div align="center">
-<pp><b>-----------------------------------------</b><pp>
 </div>
 
-1. After castl is installed, verify the installation by running the following command: ```from castl.mcfit import *```. If you encounter any issues during installation, please reach out to Hunter Brooks for assistance.
-2. Once castl is successfully imported, define the relevant variables as shown below. Ensure that all required variables are formatted correctly.
-3. To run the Markov-Chain Monte-Carlo simulation, execute the command: ```mcmcfit(input_file, output_file, model_directory, model_parm)```. These are the minimum required parameters for castl to run. You can include optional variables if needed.
+1. After castl is installed, verify the installation by running the following command: ```from castl.h5grid import *```. If you encounter any issues during installation, please reach out to Hunter Brooks for assistance. 
+2. Ensure that model spectra are assigned as: column 1 (wavelength) and column 2 (flux) 
+3. Assign the relavent variables as described below. 
+4. To compile code, execute the command: ```h5grid(model_directory, model_parm, output_h5)```. These are the minimum required parameters for castl to run. You can include optional variables if needed.
+
 
 <div align="center">
-  <p><b> Relavent Variables </b></p>
-  <p>-----------------------------------------</p>
+  <pp><b> Relavent Variables For h5grid </b></pp> 
 </div>
 
 - **Required Variables:**
-  - **input_file:** File path/name to your input spectrum: *string*: *(only csv supported)*
+  - **model_directory:** File path/name to your model spectra: *string*:
+     - *example:* ```/Desktop/spectra/test.csv```
+
+  - **model_parameters:** Model parameter names: *list*: *(must be in order that the paramters are in the file name)*
+     - *example:* ```['Teff', 'log(g)', '[M/H]', 'C/O', 'log(Kzz)']```
+
+  - **output_file:** File path/name of output file: *string*:
+     - *example:* ```/models/test```
+
+- **Optional Variables:**
+  - **wavelength_region:** The wavelength region saved for each spectrum: *list*
+    - *example:* ```[0, 10]```, default=```[0, np.inf]```
+
+
+
+
+<div align="center">
+  <p><b> How to Use mcfit </b></p>
+</div>
+<div align="center">
+</div>
+
+1. Ensure that your model is compiled into a h5 file using ```h5grid```
+2. Ensure that the observed spectra are assigned as: column 1 (wavelength), column 2 (flux), and column 3 (uncertainty)
+3. Once castl is successfully imported, define the relevant variables as shown below. Ensure that all required variables are formatted correctly.
+4. To run the Markov-Chain Monte-Carlo simulation, execute the command: ```mcmcfit(input_file, output_file, h5_directory, model_parm)```. These are the minimum required parameters for castl to run. You can include optional variables if needed.
+
+<div align="center">
+  <pp><b> Relavent Variables For mcfit </b></pp> 
+</div>
+
+- **Required Variables:**
+  - **input_file:** File path/name to your input spectrum: *string*:
      - *example:* ```/Desktop/spectra/test.csv```
 
   - **output_file:** File path/name of output file: *string*: *(do not include file type)*
     - *example:* ```/Output/test```
 
-  - **model_directory:** Directory name to model spectra: *string*: *(ensure no numbers are included in path name outside of numbers in model file name)*
-    - *example:* ```/Desktop/model/LOWZ/```
+  - **h5_directory:** Directory name to model spectra h5 file: *string*: *(ensure no numbers are included in path name outside of numbers in model file name)*
+    - *example:* ```/Desktop/model/LOWZ.h5```
 
-  - **model_parm:** Model parameter names: *list*: *(must be in order that the paramters are in the file name)*
-   - *example order:*
-      - <b>Filename:</b> LOW_Z_BD_GRID_CLEAR_Teff_500.0_logg_3.5_logZ_-0.5_CtoO_0.1_logKzz_10.0_spec.txt
-      - <b>Order:</b> Teff, logg, logZ, CtoO, logKzz
+  - **model_parm:** Model parameter names: *list*: *(must be the exact name used in h5 file)*
    - *example code:* ```['Teff', 'log(g)', '[M/H]', 'C/O', 'log(Kzz)']```
 
 - **Optional Variables:**
-  - **unit:** The number to convert model spectra wavelength unit to observed spectrum wavelength: *float*
-    - *example:* 0.0001, default=1 (model: Å -> observed: µm)
+  - **grid_scale:** Number of grid points around best grid point in each dimension: *int*
+    - *example:* ```50```, default=10
+
+  - **unit_wave:** Astropy units of the observed and model wavelength units: *list*: *(first index is observed, second index is model)*
+    - *example:* ```[u.um, u.um]```, default=```[u.um, u.um]```
+
+  - **unit_flux:** Astropy units of the observed and model flux units: *list*: *(first index is observed, second index is model)*
+    - *example:* ```[u.Jy, (u.erg / (u.cm**2 * u.s * u.um))]```, default=```[(u.erg / (u.cm**2 * u.s * u.um)), (u.erg / (u.cm**2 * u.s * u.um))]```
 
   - **walkers:** Number of walkers for emcee calculation: *int*
-    - *example:* 25, default=15
+    - *example:* ```25```, default=15
 
-  - **max_step:** Number of max steps for emcee calculation: *int*: *May be cutoff before this as a result of auto-correlation*
-    - *example:* 15000, default=1000
-
-  - **safety_coeff:** The number multiplying the steps found after ideal tau was found: *int*
-    - *example:* 8, default=10
-
-  - **stretch_factor:** The emcee StretchMove factor: *float*
-    - *example:* 10, default=2
+  - **steps:** Number of max steps for emcee calculation: *int*: *May be cutoff before this as a result of auto-correlation*
+    - *example:* ```15000```, default=1000
 
   - **monitor:** Whether a monitoring step figure is displayed every 1000 steps: *boolean*
-    - *example:* True, default=False
+    - *example:* ```True```, default=False
 
-<div align="center">
-  <h2> Example castl Output </h2>
-</div>
-
-<p align="center">
-  <a href="https://ibb.co/wpby3Tz"><img src="/castl/castl_test-1.png" width="100%"></a> <br>
-  Example Output Using castl on the LOWZ Model With Default Setting Activated 
-</p>
+  - **save_output:** Whether the output tables and figures are saved: *boolean*
+    - *example:* ```True```, default=True
 
 <div align="center">
   <h2>📞 Support & Development Team 📞</h2>

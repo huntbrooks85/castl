@@ -1,3 +1,10 @@
+#-----------------------------------------------------------------------#
+# castl.h5grid v0.6.0
+# By Hunter Brooks, at NAU, Flagstaff: Feb. 20, 2025
+#
+# Purpose: Build the h5 spectral model grid
+#-----------------------------------------------------------------------#
+
 # ------ Import File Processing Packages ------ #
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
@@ -9,8 +16,8 @@ import re
 
 # ------ Import File Loading Packages ------ #
 from astropy.table import Table
-from netCDF4 import Dataset
 from astropy.io import fits
+import xarray as xr
 import pandas as pd
 # ------------------------------------------ #
 
@@ -23,7 +30,21 @@ import warnings
 warnings.filterwarnings('ignore')
 # --------------------------------- #
      
-def h5grid(model_directory, model_parameters, output_file, wavelength_region): 
+# --------------------------------- #     
+def h5grid(model_directory, model_parameters, output_file, wavelength_region = [0, np.inf]): 
+    '''
+    Loads model grid and saves it to a loadable h5 file
+
+        Parameters:
+            model_directory (str): Model directory path
+            model_parameters (list): List of model parameters, in order of the model file name
+            output_file (str): Output file name
+            wavelength_region (list): Wavelength region saved to h5 file
+
+        Returns:
+            Model Grid (h5): An h5 file with model parameters, wavelength, and flux
+    '''
+    
     # Obtain all model file path directories
     model_files = glob.glob(f'{model_directory}/*')
     num_files = len(model_files)
@@ -38,29 +59,28 @@ def h5grid(model_directory, model_parameters, output_file, wavelength_region):
             return file_path, pd.read_csv(file_path)
 
         elif model_type in ["txt", "dat", "tbl"]:  # Loads ASCII tables
-            return file_path, pd.read_csv(file_path, delim_whitespace=True)
+            return file_path, pd.read_csv(file_path, delim_whitespace=True, comment="#")
 
         elif model_type == "fits":  # Loads FITS files
             with fits.open(file_path) as hdul:
                 data = Table(hdul[1].data).to_pandas()
             return file_path, data
-        
+
         elif model_type == "vot":  # Loads VOTable files
             votable = votable.parse(file_path)
             data = votable.get_table()
             return file_path, data
-
-        elif model_type == "nc":  # Loads NetCDF files
-            with Dataset(file_path, 'r') as nc_file:
-                variables = list(nc_file.variables.keys())
-                data = nc_file.variables[variables[0]][:]
-            return file_path, data
-
-        elif model_type in ["pkl", "pickle"]:  # Loads Pickle files
-            import pickle
-            with open(file_path, "rb") as f:
-                data = pickle.load(f)
-            return file_path, data
+        
+        elif model_type == "nc":  # Loads NetCDF files using xarray
+            with xr.open_dataset(file_path) as ds:
+                var_names = list(ds.data_vars.keys())[:2]
+                data_arrays = [ds[var].values.squeeze() for var in var_names]
+                min_size = min(arr.shape[0] for arr in data_arrays if arr.ndim == 1)
+                trimmed_data = [arr[:min_size] for arr in data_arrays]    
+                df = pd.DataFrame(np.column_stack(trimmed_data), columns=var_names)
+            
+            del ds, data_arrays, trimmed_data, var_names
+            return file_path, df
 
         elif model_type in ["tsv"]:  # Loads Tab-Separated files
             return file_path, pd.read_csv(file_path, sep="\t")
@@ -91,8 +111,8 @@ def h5grid(model_directory, model_parameters, output_file, wavelength_region):
         
         # Apply the wavelength filter
         mask = (model_wave >= wavelength_region[0]) & (model_wave <= wavelength_region[1])
-        filtered_wave = np.asarray(model_wave[mask])
-        filtered_flux = np.asarray(model_flux[mask])
+        filtered_wave = np.array(model_wave[mask])
+        filtered_flux = np.array(model_flux[mask])
         
         # Append results efficiently
         total_grid['wavelength'].append(filtered_wave)
@@ -107,29 +127,23 @@ def h5grid(model_directory, model_parameters, output_file, wavelength_region):
         total_data['file_data'][j] = total_data['file_data'][j].drop(total_data['file_data'][j].columns[0], axis=1)
     
     total_data = None
-    
-    def convert_to_float32(key, value):
-        if isinstance(value, list):
-            value = np.asarray(value)
-        return key, value.astype(np.float32) if value.dtype != np.float32 else value
-
-
-    # Parallelize the conversion process
-    with ThreadPoolExecutor() as executor:
-        total_grid = dict(executor.map(convert_to_float32, total_grid.keys(), total_grid.values()))
 
     # Save to HDF5
     with h5py.File(f"{output_file}.h5", "w") as h5f:
         for key, value in total_grid.items():
-            safe_key = key.replace("/", "|")  # Replace '/' to avoid HDF5 issues
-            value = np.array(value, dtype=np.float32)  # Convert to float32
-            h5f.create_dataset(
-                safe_key,
-                data=value,
-                compression="gzip",
-                compression_opts=9,
-                shuffle=True,
-                dtype=value.dtype,
-                chunks=True  # Enable chunking for better compression on large arrays
-            )
-            h5f[safe_key].attrs["original_name"] = key  # Store original name
+            safe_key = key.replace("/", "|")
+
+            if isinstance(value, list):
+                try:
+                    value = np.array(value, dtype=np.float32)
+                except: 
+                    max_len = max(len(item) for item in value)
+                    padded_value = [item.tolist() + [np.nan] * int(max_len - len(item)) for item in value]
+                    value = np.array(padded_value, dtype=np.float32)
+
+            elif isinstance(value, (int, float)):
+                value = np.array([value], dtype=np.float32) 
+                
+            h5f.create_dataset(safe_key, data=value, compression="gzip", compression_opts=9, shuffle=True, dtype=value.dtype, chunks=True)
+            h5f[safe_key].attrs["original_name"] = key
+# --------------------------------- #            

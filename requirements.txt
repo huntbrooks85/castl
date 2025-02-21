@@ -10,3 +10,4 @@ corner
 scikit-learn
 scipy
 numpy
+xarray
