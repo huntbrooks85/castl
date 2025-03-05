@@ -1,3 +1,8 @@
+
+<p align="center">
+    <a href="https://ibb.co/GQqg1829"><img src="/example/model/castl_logos.png" width="50%"></a> <br>
+</p>
+
 <h1 align="center" id="title"> 🏰 castl 🏰 </h1>
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.14969916.svg)](https://doi.org/10.5281/zenodo.14969916) [![PyPi](https://img.shields.io/pypi/v/castl)](https://pypi.org/project/castl/) [![PyPI Downloads](https://static.pepy.tech/badge/castl)](https://pepy.tech/projects/castl)
