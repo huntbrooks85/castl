@@ -1,6 +1,6 @@
 
 <p align="center">
-    <a href="https://ibb.co/GQqg1829"><img src="/example/model/castl_logos.png" width="50%"></a> <br>
+    <a href="https://ibb.co/GQqg1829"><img src="/example/model/castl_logos.png" width="75%"></a> <br>
 </p>
 
 <h1 align="center" id="title"> 🏰 castl 🏰 </h1>
