@@ -83,8 +83,8 @@ def mcfit(input_file, output_file, model_directory, model_parm, grid_scale = 10,
         ValueError(f'Input a list as your model_parm. Current variable type: {type(model_parm)}')
     
     # Ensures there are enough walkers for emcee
-    if walkers < 2*(len(model_parm) + 2): 
-        walkers = 2*(len(model_parm) + 2)
+    if walkers < 2*(len(model_parm) + 3): 
+        walkers = 2*(len(model_parm) + 3)
     
     # ------ Load in the observed models and spectra ------ #
     wave, flux, unc = obspec(input_file, unit_wave, unit_flux)
@@ -92,12 +92,13 @@ def mcfit(input_file, output_file, model_directory, model_parm, grid_scale = 10,
     
     # ------ Build interpolation grid and start mcmc calculation ------ #
     inter, scaler, grid, best_point = gridinter(model_parm, model_directory, grid_scale, wave, flux, unc, unit_wave)
-    sampler, discard = specmc(model_parm, inter, scaler, best_point, flux, unc, grid, walkers, steps, monitor)
+    sampler, discard = specmc(model_parm, inter, scaler, best_point, wave, flux, unc, grid, walkers, steps, monitor)
     # ----------------------------------------------------------------- #
     
     # ------ Provides user with mcmc best fit model ------ #
     if save_output == True:
-        mcplot(sampler, discard, output_file, inter, scaler, wave, flux, unc, model_parm)
+        best_fit_params = mcplot(sampler, discard, output_file, inter, scaler, wave, flux, unc, model_parm)
+        return best_fit_params
     # ---------------------------------------------------- #
 # --------------------------------- #
 
@@ -246,7 +247,7 @@ def gridinter(parm_list, model_directory, grid_scale, observed_wave, observed_fl
             min_element_idx = j
     
     # Generates best grid point along the model
-    best_point = list(grid_params[min_sublist_idx]) + [dist_list[min_element_idx], 1]
+    best_point = list(grid_params[min_sublist_idx]) + [0, dist_list[min_element_idx], 1]
     
     # Normalize parameters
     scaler = MinMaxScaler()
@@ -256,7 +257,7 @@ def gridinter(parm_list, model_directory, grid_scale, observed_wave, observed_fl
     new_flux_data_list = np.array(new_flux_data_list, dtype=np.float32)
 
     # Normalize best_point_array using the same scaler used for grid_params
-    best_point_array = np.array(best_point[:-2])
+    best_point_array = np.array(best_point[:-3])
     best_point_array = best_point_array.reshape(1, -1)
     best_point_normalized = scaler.transform(best_point_array)
 
@@ -282,47 +283,42 @@ def gridinter(parm_list, model_directory, grid_scale, observed_wave, observed_fl
 # --------------------------------- #
 
 # --------------------------------- #
-def statmc(observed_flux, observed_unc, interpolator, scaler, parm):
-    '''
-    Loads in Observed Spectrum and Converts Observed Flux and Uncertainty Units to Model Units
+def statmc(observed_wave, observed_flux, observed_unc, interpolator, scaler, parm):
+    """
+    Compute the log-likelihood including radial velocity shift.
+    Optimized for speed.
+    """
+    # Ensure inputs are NumPy arrays
+    observed_wave = np.asarray(observed_wave, dtype=np.float64)
+    observed_flux = np.asarray(observed_flux, dtype=np.float64)
+    observed_unc = np.asarray(observed_unc, dtype=np.float64)
 
-        Parameters:
-            parm_list (list): List of model parameters, in order of the model file name
-            model_directory (str): Model directory path
-            grid_scale (int): Number of points used in each dimension of the grid
-            observed_wave (array): Observed wave data from "obspec"
-            observed_flux (array): Observed flux data from "obspec"
-            observed_unc (array): Observed uncertainty data from "obspec"    
-            unit_wave (list): List of astropy units for the model and observed wavelength untis
-
-        Returns:
-            interpolator (array): Linear interpolator for the spectral model grid
-            scaler (array): Normalizing array for the model grid
-            grid_params (array): Grid point array for the model grid
-            best_point (list): The best point found along the model grid
-    '''
-    
-    # Denormalize the input parameters using the provided scaler
-    point = np.array(parm[:-2]).reshape(1, -1)
+    # Model interpolation
+    point = np.array(parm[:-3]).reshape(1, -1)
     normalized_new_point = scaler.transform(point)
-
-    # Interpolation to get model flux
     model_flux = interpolator(normalized_new_point)
 
-    # Apply Gaussian filter to the model flux
-    resampled_flux = gaussian_filter1d(model_flux, parm[-1])[0]
+    # Apply Gaussian smoothing
+    resampled_flux = gaussian_filter1d(model_flux, parm[-1], mode='nearest')[0]
+    
+    # Apply Doppler shift
+    v_r = parm[-3]
+    c_inv = 1 / 299792.458
+    scale_factor = np.sqrt((1 + v_r * c_inv) / (1 - v_r * c_inv))
+    shifted_wave = observed_wave * scale_factor
+    new_model = np.interp(observed_wave, shifted_wave, resampled_flux, left=np.nan, right=np.nan)
 
-    # Apply distance ratio correction
-    observed_to_model_flux = observed_flux / 10**(parm[-2])
-    observed_to_model_unc = observed_unc / 10**(parm[-2])
-    
-    # Efficiently compute the chi-square statistic
-    diff = np.subtract(observed_to_model_flux, resampled_flux)
-    chi_square = np.nansum(np.square(diff / observed_to_model_unc)) / ((len(observed_flux) - len(parm)))
-    
-    # Return the final statistic
-    stat = -0.5 * chi_square
-    return stat
+    # Flux scaling
+    dilution_factor = 10**(-parm[-2])
+    observed_to_model_flux = observed_flux * dilution_factor
+    observed_to_model_unc = observed_unc * dilution_factor
+
+    # Compute chi-square efficiently
+    diff = observed_to_model_flux - new_model
+    inv_unc_sq = np.reciprocal(observed_to_model_unc**2, where=observed_to_model_unc > 0, out=np.zeros_like(observed_to_model_unc))
+    chi_square = np.nansum(diff**2 * inv_unc_sq) / (len(observed_flux) - len(parm))
+
+    return -0.5 * chi_square
 # --------------------------------- #
 
 # --------------------------------- #
@@ -333,18 +329,17 @@ def prior(parm, parm_bound):
 # --------------------------------- #
 
 # --------------------------------- #
-def log_posterior(parm, observed_flux, unc, interpolator, scaler, parm_bound):
+def log_posterior(parm, observed_wave, observed_flux, unc, interpolator, scaler, parm_bound):
     lp = prior(parm, parm_bound)
     if not np.isfinite(lp):
         return -np.inf
     
-    stat = statmc(observed_flux, unc, interpolator, scaler, parm)
-    
+    stat = statmc(observed_wave, observed_flux, unc, interpolator, scaler, parm)  
     return lp + stat if stat != 0 else -np.inf
 # --------------------------------- #
 
 # --------------------------------- #
-def specmc(model_parm, interpolator, scaler, best_point, observed_flux, unc, grid, walkers, max_step, monitor):
+def specmc(model_parm, interpolator, scaler, best_point, observed_wave, observed_flux, unc, grid, walkers, max_step, monitor):
     '''
     Runs the MCMC calculation using the interpolator from "gridinter"
 
@@ -370,7 +365,7 @@ def specmc(model_parm, interpolator, scaler, best_point, observed_flux, unc, gri
         return [(min(grid[:, i]), max(grid[:, i])) for i in range(grid.shape[1])]
 
     # Creates list of the parameter bounds
-    parm_bound = get_min_max_ranges(grid) + [(np.log10(5.1332207142e-28), np.log10(5.1332207142e-16)), (0.5, 5)]
+    parm_bound = get_min_max_ranges(grid) + [(-2500, 2500), (np.log10(5.1332207142e-28), np.log10(5.1332207142e-16)), (0.5, 5)]
     n_params = len(parm_bound)
 
     # Creates the intial positions around a random 10% ball of the best point
@@ -390,10 +385,10 @@ def specmc(model_parm, interpolator, scaler, best_point, observed_flux, unc, gri
 
     # Use multiprocessing Pool
     sampler = emcee.EnsembleSampler(walkers, n_params, log_posterior, moves=moves, 
-                                    args=(observed_flux, unc, interpolator, scaler, parm_bound))
+                                    args=(observed_wave, observed_flux, unc, interpolator, scaler, parm_bound))
     
     # Starts running the emcee sampler checking every 1000 steps
-    labels = model_parm + ['Dilution Factor', 'Smoothing']
+    labels = model_parm + ['Radial Velocity', 'Dilution Factor', 'Smoothing']
     best_discard = 0
     for sample in tqdm(sampler.sample(initial_positions, iterations=max_step), total=max_step, desc="Starting MCMC: ", ncols=100, unit="step"):
         if sampler.iteration == max_step:
@@ -442,7 +437,7 @@ def mcbest(sampler, discard, labels):
     flat_samples = sampler.get_chain(discard=int(discard), flat=True)
     best_fit_params = []
     
-    labels = labels + ['Dilution Factor']
+    labels = labels + ['Radial Velocity', 'Dilution Factor']
     
     # Finds the best fit parameters with their associated uncertainties
     print('<------ Best Fit Parameters ------>')
@@ -482,31 +477,31 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     '''
     
     # SAVES DATA TO H5PY FILE
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------- #
     chain = sampler.get_chain()
     
     with h5py.File(f'{output_file}_sampler.h5', 'w') as f:
         f.create_dataset('chain', data=chain)
         f.create_dataset('log_prob', data=sampler.get_log_prob())
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------- #
 
     # SETS UP PLOTTING DATA
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------- #
     plt.rcParams['font.family'] = 'serif'  # Use a generic serif font
 
     chain_shape = sampler.chain.shape# Obtains shape of simulation sample
     best_fit_params = mcbest(sampler, discard, labels) # Obtains best fit simulation parameters
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------- #
     
     # PLOTS WALKERS
-    # --------------------------------------------------------------------------------------------------------------------------------------------------- #
+    # ------------------------------------------------------------- #
     samples = sampler.get_chain() # Obtains the readable version of simulation sample
 
     # Create subplots
     fig, axes = plt.subplots(chain_shape[2], figsize=(12, 8), sharex=True)
 
     # Plot each parameter
-    temp_labels = labels + ['Dilution Factor', 'Smoothing']
+    temp_labels = labels + ['Radial Velocity', 'Dilution Factor', 'Smoothing']
     for i in range(chain_shape[2]):
         ax = axes[i]
         for j in range(chain_shape[0]):
@@ -521,15 +516,15 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     plt.tight_layout()
     plt.savefig(f'{output_file}_steps.pdf')
     plt.close('all')
-    # --------------------------------------------------------------------------------------------------------------------------------------------------- #
+    # ------------------------------------------------------------- #
 
     # PLOTS SPECTRA
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------- #
     fig, (ax_chain, ax_diff) = plt.subplots(2, 1, figsize=(12, 10), gridspec_kw={'height_ratios': [2, 1]}, sharex=True) # Sets of figure dimesion and height ratios
     best_values = [sublist[len(sublist) // 2] for sublist in best_fit_params][:-1]
     
     # Interpolates best fit point
-    point = np.array(np.array(best_values[:-1]).reshape(1, -1))
+    point = np.array(np.array(best_values[:-2]).reshape(1, -1))
     normalized_new_point = scaler.transform(point)
     interpolated_flux = interpolator(normalized_new_point)
     model_flux = gaussian_filter1d(interpolated_flux[0], best_fit_params[-1][1])
@@ -567,10 +562,10 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     plt.subplots_adjust(hspace=0)
     plt.savefig(f'{output_file}_fit.pdf')
     plt.close('all')
-    # -------------------------------------------------------------
+    # ------------------------------------------------------------- #
     
     # SAVE Best Fit Model
-    # --------------------------------------------------------------------------------------------------------------------------------------------------- #
+    # ------------------------------------------------------------- #
     # Save data to CSV
     csv_filename = f"{output_file}_spec.csv"
     data = np.column_stack((observed_wave, model_flux))
@@ -579,10 +574,10 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     # Alternatively, using pandas:
     df = pd.DataFrame({"wavelength": observed_wave, "model_flux": model_flux})
     df.to_csv(csv_filename, index=False)
-    # --------------------------------------------------------------------------------------------------------------------------------------------------- #
+    # ------------------------------------------------------------- #
     
     # PLOTS CORNER PLOT
-    # --------------------------------------------------------------------------------------------------------------------------------------------------- #
+    # ------------------------------------------------------------- #
     plt.figure(figsize=(10, 10)) # Sets figure size for the corner plot
     flat_samples = sampler.get_chain(discard=int(discard), flat=True) # Obtains readable simulation sample for corner plot
 
@@ -590,16 +585,19 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     def calculate_errors_and_limits(best_fit_params):
         titles = []
         for i, params in enumerate(best_fit_params):
-            titles.append(r'${:.3f}^{{+{:.3f}}}_{{-{:.3f}}}$'.format(params[1], round(params[2] - params[1], 2), round(params[1] - params[0], 2)))
+            # if i < len(best_fit_params) - 3:
+                # titles.append(r'${:.3f}^{{+{:.2f}}}_{{-{:.2f}}}$'.format(params[1], round(params[2] - params[1], 2), round(params[1] - params[0], 2)))
+            # else: 
+            titles.append(r'${:.2f}^{{+{:.2f}}}_{{-{:.2f}}}$'.format(params[1], round(params[2] - params[1], 2), round(params[1] - params[0], 2)))
         return titles
 
     # Flatten the array of best fit parameters
-    labels = labels + [r"$\log_{10} \left( \frac{R^2}{D^2} \right)$"]
+    labels = labels + [r'$v_{r}$', r"$\log_{10} \left( \frac{R^2}{D^2} \right)$"]
     filtered_truths = [best_fit_params[i][1] for i in range(len(labels))]
     flat_samples = flat_samples[:, :-1]
     
     # Corner plot with needed values
-    corner_fig = corner.corner(flat_samples, labels=labels, truths=filtered_truths, truth_color='k', title_fmt='.2f', title_kwargs={'fontsize': 15}, 
+    corner_fig = corner.corner(flat_samples, labels=labels, truths=filtered_truths, truth_color='k', title_fmt='.2f', title_kwargs={'fontsize': 10}, 
                                plot_contours=True, label_kwargs={'fontsize': 20}, quantiles=[0.05, 0.5, 0.95], use_math_text=True, color = 'red')
     
     # Calls the title function and finds the location each title is needed
@@ -616,5 +614,7 @@ def mcplot(sampler, discard, output_file, interpolator, scaler, observed_wave, o
     plt.subplots_adjust(left=0.125, right=0.875, bottom=0.125, top=0.875)
     plt.savefig(f'{output_file}_corner.pdf')
     plt.close('all')
-    # --------------------------------------------------------------------------------------------------------------------------------------------------- #
+    
+    return best_fit_params
+    # ------------------------------------------------------------- #
 # --------------------------------- #    
