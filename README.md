@@ -121,6 +121,9 @@
   - **steps:** Number of max steps for emcee calculation: *int*: *May be cutoff before this as a result of auto-correlation*
     - *example:* ```15000```, default=1000
 
+  - **rv_fit:** Whether a radial velocity is fit: *boolean*
+    - *example:* ```True```, default=False
+
   - **monitor:** Whether a monitoring step figure is displayed every 1000 steps: *boolean*
     - *example:* ```True```, default=False
 

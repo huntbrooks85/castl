@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="castl",
-    version="0.6.1",
+    version="0.6.2",
     license="MIT License",
     packages=find_packages(),
     install_requires=[
