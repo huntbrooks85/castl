@@ -1,6 +1,6 @@
 #-----------------------------------------------------------------------#
-# castl.h5grid v0.6.0
-# By Hunter Brooks, at NAU, Flagstaff: Feb. 20, 2025
+# castl.h5grid v0.6.2
+# By Hunter Brooks, at NAU, Flagstaff: Mar. 26, 2025
 #
 # Purpose: Build the h5 spectral model grid
 #-----------------------------------------------------------------------#

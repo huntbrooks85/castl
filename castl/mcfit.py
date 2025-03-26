@@ -1,6 +1,6 @@
 #-----------------------------------------------------------------------#
 # castl.mcfit v0.6.2
-# By Hunter Brooks, at NAU, Flagstaff: Feb. 20, 2025
+# By Hunter Brooks, at NAU, Flagstaff: Mar. 26, 2025
 #
 # Purpose: Perform MCMC calculation on model spectra
 #
@@ -69,8 +69,8 @@ def mcfit(input_file, output_file, model_directory, model_parm,
             save_output (boolean): When 'True' saves best fit line and corner plot
 
         Returns:
-            Chi Square (printed): The best fit model spectrum chi square value
-            Best Fit Parameters (printed): Best fit value for each parameter and the associated uncertainties
+            Chi Square (float): The best fit model spectrum chi square value
+            Best Fit Parameters (array): Best fit value for each parameter and the associated uncertainties
             Table (csv): Saves best fit model spectrum
             Table (h5): Saves all walker information
             Figures (pdf): Save value over step and combined figure with best fit model compared to observed and corner plot
@@ -119,7 +119,7 @@ def obspec(input_file, unit_wave, unit_flux):
             unit_flux (list): List of astropy units for the model and observed flux untis
 
         Returns:
-            observed_wave (array): 
+            observed_wave (array): Observed spectrum wavelength
             observed_flux (array): Unit converted observed spectrum flux
             observed_unc_erg (array): Unit converted observed spectrum uncertainties 
     '''
@@ -275,16 +275,16 @@ def gridinter(parm_list, model_directory, grid_scale, observed_wave, observed_fl
     best_point_normalized = scaler.transform(best_point_array)
 
     # Select the nearest "grid_scale" points for each dimension
-    nearest_2_points_indices = []
+    nearest_points_indices = []
     for dim in range(normalized_grid_params.shape[1]):
         distances = np.abs(normalized_grid_params[:, dim] - best_point_normalized[0, dim]) 
         sorted_indices = np.argsort(distances)
-        nearest_2_points_indices.append(sorted_indices[:grid_scale])
+        nearest_points_indices.append(sorted_indices[:grid_scale])
 
     # Flatten the indices for the closest 2 points across all dimensions
-    nearest_2_points_indices = np.unique(np.concatenate(nearest_2_points_indices))
-    subset_grid_params = normalized_grid_params[nearest_2_points_indices] 
-    subset_flux_data = new_flux_data_list[nearest_2_points_indices]
+    nearest_points_indices = np.unique(np.concatenate(nearest_points_indices))
+    subset_grid_params = normalized_grid_params[nearest_points_indices] 
+    subset_flux_data = new_flux_data_list[nearest_points_indices]
 
     # Builds interpolator based on grid size
     if D < 5:
